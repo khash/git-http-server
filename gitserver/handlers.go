@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"github.com/go-git/go-git/v5/plumbing/protocol/packp"
 	"github.com/rs/zerolog/log"
 	"io"
 	"net/http"
@@ -34,34 +35,29 @@ func AbsoluteRepoPath(relativePath string) (string, error) {
 func getInfoRefs(route *Route, w http.ResponseWriter, r *http.Request) {
 	repo, err := AbsoluteRepoPath(route.RepoPath)
 	if err != nil {
-		w.WriteHeader(404)
+		w.WriteHeader(http.StatusNotFound)
 		return
 	}
 
-	if gServerConfig.Repos.AutoInit && !repoExists(repo) {
-		cmd := GitCommand{Args: []string{"init", "--bare", repo}}
-		_, err := cmd.Run(true)
-		if err != nil {
-			w.WriteHeader(404)
-			return
-		}
+	if !repoExists(repo) {
+		log.Error().Str("repo", repo).Msg("Repo not found")
+		w.WriteHeader(http.StatusNotFound)
+		return
 	}
 
-	log.Debug().Str("repo", repo).Msg("getInfoRefs")
+	if ok, _ := checkAccess(r, w, repo, AccessRead); !ok {
+		return
+	}
 
 	serviceName := getServiceName(r)
 
-	//message := messageFromService(serviceName, route.RepoPath)
-	//details := authy.Details{
-	//	"repo": repo,
-	//	"ip":   r.RemoteAddr,
-	//}
-	//if !approveTransaction(message, details) {
-	//	w.WriteHeader(403)
-	//	return
-	//}
+	log.Debug().
+		Str("ip", r.RemoteAddr).
+		Str("service", serviceName).
+		Str("repo", repo).
+		Msg("getInfoRefs")
 
-	w.WriteHeader(200)
+	w.WriteHeader(http.StatusOK)
 	w.Header().Set("Content-Type", "application/x-git-"+serviceName+"-advertisement")
 
 	str := "# service=git-" + serviceName
@@ -85,12 +81,22 @@ func uploadPack(route *Route, w http.ResponseWriter, r *http.Request) {
 	}
 	log.Info().Str("repo", repo).Msg("uploadPack")
 
-	w.WriteHeader(200)
+	if !repoExists(repo) {
+		log.Error().Str("repo", repo).Msg("Repo not found")
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+
+	if ok, _ := checkAccess(r, w, repo, AccessRead); !ok {
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
 	w.Header().Set("Content-Type", "application/x-git-upload-pack-result")
 
 	requestBody, err := io.ReadAll(r.Body)
 	if err != nil {
-		w.WriteHeader(404)
+		w.WriteHeader(http.StatusBadRequest)
 		log.Fatal().Err(err).Msg("Error")
 		return
 	}
@@ -101,18 +107,77 @@ func uploadPack(route *Route, w http.ResponseWriter, r *http.Request) {
 func receivePack(route *Route, w http.ResponseWriter, r *http.Request) {
 	repo, err := AbsoluteRepoPath(route.RepoPath)
 	if err != nil {
+		log.Error().Err(err).Msg("AbsoluteRepoPath error")
 		return
 	}
 	log.Info().Str("repo", repo).Msg("receivePack")
 
-	w.WriteHeader(200)
+	if !repoExists(repo) {
+		log.Error().Str("repo", repo).Msg("Repo not found")
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+
+	ok := false
+	var user string
+	if ok, user = checkAccess(r, w, repo, AccessWrite); !ok {
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
 	w.Header().Set("Content-Type", "application/x-git-receive-pack-result")
 
 	requestBody, err := io.ReadAll(r.Body)
 	if err != nil {
-		w.WriteHeader(404)
-		log.Fatal().Err(err).Msg("Error")
+		w.WriteHeader(http.StatusBadRequest)
+		log.Error().Err(err).Msg("Error")
 		return
+	}
+
+	log.Debug().
+		Int("length", len(requestBody)).
+		Msg("Unpacking packfile")
+
+	if len(requestBody) > gServerConfig.MaxPacketSize {
+		log.Error().Msg("Error: packfile too large")
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	ur := packp.NewReferenceUpdateRequest()
+	input := bytes.NewReader(requestBody)
+	err = ur.Decode(input)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		log.Error().Err(err).Msg("Error decoding packfile")
+		return
+	}
+
+	// dump the commands
+	for _, cmd := range ur.Commands {
+		log.Debug().
+			Str("action", string(cmd.Action())).
+			Str("name", cmd.Name.String()).
+			Str("old", cmd.Old.String()).
+			Str("new", cmd.New.String()).
+			Msg("Command")
+
+		// check ref auth
+		if gServerConfig.RefAuth != nil {
+			log.Debug().
+				Str("action", string(cmd.Action())).
+				Str("ref", cmd.Name.String()).
+				Msg("Checking ref auth")
+
+			if !gServerConfig.RefAuth(repo, user, cmd.Name.String(), string(cmd.Action()), AccessWrite) {
+				log.Error().
+					Str("action", string(cmd.Action())).
+					Str("ref", cmd.Name.String()).
+					Msg("Ref auth failed")
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
+		}
 	}
 
 	WriteGitToHTTP(w, GitCommand{ProcInput: bytes.NewReader(requestBody), Args: []string{"receive-pack", "--stateless-rpc", repo}})
@@ -123,15 +188,48 @@ func repoExists(name string) bool {
 	return !os.IsNotExist(err)
 }
 
-//func messageFromService(service string, repo string) string {
-//	message := ""
-//	if service == "receive-pack" {
-//		message = "Push to " + repo
-//	} else if service == "upload-pack" {
-//		message = "Fetch from " + repo
-//	} else {
-//		message = "Unknown service " + service + " for " + repo
-//	}
-//
-//	return message
-//}
+// the first return value is the result of the authentication
+// the second one is if the server should ask for authentication
+func checkAccess(r *http.Request,
+	w http.ResponseWriter,
+	repo string,
+	access AccessType) (bool, string) {
+	if !gServerConfig.Protected {
+		return true, ""
+	}
+
+	log.Debug().
+		Str("repo", repo).
+		Str("access", access.String()).
+		Msg("Checking access")
+
+	if gServerConfig.Auth == nil {
+		log.Fatal().Msg("No auth configured")
+		return false, ""
+	}
+
+	user, password, ok := r.BasicAuth()
+	if !ok {
+		log.Debug().Msg("No basic auth values found")
+
+		w.Header().Set("WWW-Authenticate", `Basic realm="git"`)
+		http.Error(w, "Access denied", http.StatusUnauthorized)
+		return false, user
+	}
+
+	// repo is the repo name prefixed with the repos path, so we need to remove it
+	repo = strings.Replace(repo, gServerConfig.Repos.Path+"/", "", 1)
+	// remove the trailing .git
+	repo = strings.TrimSuffix(repo, ".git")
+	// remove the leading /
+	repo = strings.TrimPrefix(repo, "/")
+
+	if gServerConfig.Auth(repo, user, password, access) {
+		return true, user
+	}
+
+	log.Debug().Msg("Access denied")
+	http.Error(w, "Access denied", http.StatusForbidden)
+
+	return false, user
+}

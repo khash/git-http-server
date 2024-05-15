@@ -6,32 +6,33 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
+type AccessType int
+
+const (
+	AccessRead AccessType = iota
+	AccessWrite
+)
+
+//go:generate stringer -type=AccessType --trimprefix=Access
+
+type RepoAuth = func(repoName string, userName string, password string, requestedAccess AccessType) bool
+type RefAuth = func(repoName string, userName string, refName string, action string, requestedAccess AccessType) bool
+
 // ReposConfig is the configuration of the repositories
 type ReposConfig struct {
-	Path     string `yaml:"path"`
-	AutoInit bool   `yaml:"autoinit"`
+	Path string `yaml:"path"`
 }
-
-//// UIConfig is the config of the UI
-//type UIConfig struct {
-//	Username  string `yaml:"username,omitempty"`
-//	Password  string `yaml:"password,omitempty"`
-//	Path      string `yaml:"path"`
-//	DisableUI bool   `yaml:"disable"`
-//}
 
 // Config stores the config of the git server
 type Config struct {
-	Host       string       `yaml:"host"`
-	EnableCORS bool         `yaml:"cors"`
-	Repos      *ReposConfig `yaml:"repos"`
-	//UI         *UIConfig    `yaml:"ui"`
+	Host          string       `yaml:"host"`
+	EnableCORS    bool         `yaml:"cors"`
+	Repos         *ReposConfig `yaml:"repos"`
+	MaxPacketSize int          `yaml:"max_packet_size"`
+	Auth          RepoAuth     `yaml:"-"`
+	Protected     bool         `yaml:"protected"`
+	RefAuth       RefAuth      `yaml:"-"`
 }
-
-//// HasAuth returns whether the auth is configured or not.
-//func (config *Config) HasAuth() bool {
-//	return config.UI.Username != "" && config.UI.Password != ""
-//}
 
 // WriteToPath writes the config to the given filePath
 func (config *Config) WriteToPath(filePath string) {
