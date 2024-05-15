@@ -14,8 +14,3 @@ func Init(config *Config) error {
 
 	return err
 }
-
-// ReposRoot returns the directory where repositories are stored.
-func ReposRoot() string {
-	return gServerConfig.Repos.Path
-}

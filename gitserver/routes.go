@@ -1,8 +1,7 @@
 package gitserver
 
 import (
-	"fmt"
-	"log"
+	"github.com/rs/zerolog/log"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -42,7 +41,6 @@ var Routes = []RouteMatcher{
 	RouteMatcher{Matcher: regexp.MustCompile("(.*?)/info/refs$"), Handler: getInfoRefs},
 	RouteMatcher{Matcher: regexp.MustCompile("(.*?)/git-upload-pack$"), Handler: uploadPack},
 	RouteMatcher{Matcher: regexp.MustCompile("(.*?)/git-receive-pack$"), Handler: receivePack},
-	RouteMatcher{Matcher: regexp.MustCompile("(.*)"), Params: []string{"go-get"}, Handler: goGettable},
 }
 
 // MatchRoute returns the matched route or nil.
@@ -55,15 +53,13 @@ func MatchRoute(r *http.Request) *Route {
 			repoName := matches[1]
 			file := strings.Replace(path, repoName+"/", "", 1)
 
-			fmt.Printf("matches: %q\n", matches)
-			fmt.Printf("repo name: %s\n", repoName)
-			fmt.Printf("file: %s\n", file)
+			log.Debug().Str("repo", repoName).Str("file", file).Msg("Matched route")
 
 			return NewParsedRoute(repoName, file, routeMatcher)
 		}
 	}
 
-	log.Printf("No route found for: %s", path)
+	log.Debug().Str("path", path).Msg("No route found")
 	return nil
 }
 

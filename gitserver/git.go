@@ -2,9 +2,8 @@ package gitserver
 
 import (
 	"bytes"
+	"github.com/rs/zerolog/log"
 	"io"
-	"io/ioutil"
-	"log"
 	"net/http"
 	"os/exec"
 )
@@ -17,7 +16,7 @@ type GitCommand struct {
 
 // Run runs the git command
 func (gitCommand *GitCommand) Run(wait bool) (io.ReadCloser, error) {
-	log.Printf("Executing: git %v", gitCommand.Args)
+	log.Debug().Strs("args", gitCommand.Args).Msg("Executing: git")
 	cmd := exec.Command("git", gitCommand.Args...)
 	stdout, err := cmd.StdoutPipe()
 
@@ -50,7 +49,7 @@ func (gitCommand *GitCommand) RunAndGetOutput() []byte {
 		return []byte{}
 	}
 
-	data, err := ioutil.ReadAll(stdout)
+	data, err := io.ReadAll(stdout)
 	if err != nil {
 		return []byte{}
 	}
@@ -63,14 +62,14 @@ func WriteGitToHTTP(w http.ResponseWriter, gitCommand GitCommand) {
 	stdout, err := gitCommand.Run(false)
 	if err != nil {
 		w.WriteHeader(404)
-		log.Fatal("Error:", err)
+		log.Fatal().Err(err).Msg("Error")
 		return
 	}
 
 	nbytes, err := io.Copy(w, stdout)
 	if err != nil {
-		log.Fatal("Error writing to socket", err)
+		log.Fatal().Err(err).Msg("Error writing to socket")
 	} else {
-		log.Printf("Bytes written: %d", nbytes)
+		log.Debug().Int64("bytes", nbytes).Msg("Bytes written")
 	}
 }
