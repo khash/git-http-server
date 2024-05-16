@@ -17,10 +17,12 @@ const (
 
 type RepoAuth = func(repoName string, userName string, password string, requestedAccess AccessType) bool
 type RefAuth = func(repoName string, userName string, refName string, action string, requestedAccess AccessType) bool
+type AutoInitAuth = func(repoName string, userName string) bool
 
 // ReposConfig is the configuration of the repositories
 type ReposConfig struct {
-	Path string `yaml:"path"`
+	Path     string `yaml:"path"`
+	AutoInit bool   `yaml:"auto_init"`
 }
 
 // Config stores the config of the git server
@@ -32,6 +34,7 @@ type Config struct {
 	Auth          RepoAuth     `yaml:"-"`
 	Protected     bool         `yaml:"protected"`
 	RefAuth       RefAuth      `yaml:"-"`
+	AutoInitAuth  AutoInitAuth `yaml:"-"`
 }
 
 // WriteToPath writes the config to the given filePath

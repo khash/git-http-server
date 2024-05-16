@@ -39,14 +39,38 @@ func getInfoRefs(route *Route, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !repoExists(repo) {
-		log.Error().Str("repo", repo).Msg("Repo not found")
-		w.WriteHeader(http.StatusNotFound)
+	var user string
+	var ok bool
+	if ok, user = checkAccess(r, w, repo, AccessRead); !ok {
 		return
 	}
 
-	if ok, _ := checkAccess(r, w, repo, AccessRead); !ok {
-		return
+	if !repoExists(repo) {
+		if gServerConfig.Repos.AutoInit {
+			if gServerConfig.AutoInitAuth != nil {
+				if !gServerConfig.AutoInitAuth(repo, user) {
+					log.Error().Str("repo", repo).Msg("Auto init auth failed")
+					w.WriteHeader(http.StatusForbidden)
+					return
+				}
+			}
+
+			// add a .git suffix if it's not there
+			if !strings.HasSuffix(repo, ".git") {
+				repo += ".git"
+			}
+			cmd := GitCommand{Args: []string{"init", "--bare", repo}}
+			_, err := cmd.Run(true)
+			if err != nil {
+				log.Error().Err(err).Str("repo", repo).Msg("Error initializing repo")
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+		} else {
+			log.Error().Str("repo", repo).Msg("Repo not found")
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
 	}
 
 	serviceName := getServiceName(r)
