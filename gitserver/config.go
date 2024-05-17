@@ -18,6 +18,7 @@ const (
 type RepoAuth = func(repoName string, userName string, password string, requestedAccess AccessType) bool
 type RefAuth = func(repoName string, userName string, refName string, action string, requestedAccess AccessType) bool
 type AutoInitAuth = func(repoName string, userName string) bool
+type PostCommitHook = func(repoName string, userName string)
 
 // ReposConfig is the configuration of the repositories
 type ReposConfig struct {
@@ -27,14 +28,15 @@ type ReposConfig struct {
 
 // Config stores the config of the git server
 type Config struct {
-	Host          string       `yaml:"host"`
-	EnableCORS    bool         `yaml:"cors"`
-	Repos         *ReposConfig `yaml:"repos"`
-	MaxPacketSize int          `yaml:"max_packet_size"`
-	Auth          RepoAuth     `yaml:"-"`
-	Protected     bool         `yaml:"protected"`
-	RefAuth       RefAuth      `yaml:"-"`
-	AutoInitAuth  AutoInitAuth `yaml:"-"`
+	Host           string
+	EnableCORS     bool
+	Repos          *ReposConfig
+	MaxPacketSize  int
+	Auth           RepoAuth
+	Protected      bool
+	RefAuth        RefAuth
+	AutoInitAuth   AutoInitAuth
+	PostCommitHook PostCommitHook
 }
 
 // WriteToPath writes the config to the given filePath

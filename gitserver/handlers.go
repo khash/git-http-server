@@ -205,6 +205,11 @@ func receivePack(route *Route, w http.ResponseWriter, r *http.Request) {
 	}
 
 	WriteGitToHTTP(w, GitCommand{ProcInput: bytes.NewReader(requestBody), Args: []string{"receive-pack", "--stateless-rpc", repo}})
+
+	// call the hook if it's defined
+	if gServerConfig.PostCommitHook != nil {
+		go gServerConfig.PostCommitHook(repo, user)
+	}
 }
 
 func repoExists(name string) bool {
